@@ -86,14 +86,11 @@ public class Main {
         return Jsoup.parse(response.body(), response.uri().toString());
     }
 
-    //TODO: image extension, get it from content-type header
-
     private static void getPicturesFromDoc(Document doc) throws IOException, InterruptedException {
         Elements images = doc.getElementsByTag("img");
         String saveDirectory = cmd.getOptionValue("oDir");
         if (saveDirectory == null)
             saveDirectory = System.getProperty("user.dir");
-        String formatToSave = cmd.getOptionValue("iFormat");
 
         for (Element image : images) {
             String src = image.attr("abs:src");
@@ -101,34 +98,46 @@ public class Main {
                 continue;
             PROCESSED_IMAGES.add(src);
 
-            int fileNameStartIndex = src.lastIndexOf('/') + 1;
-            int questionMarkLastIndex = src.lastIndexOf('?');
-            String fileName = questionMarkLastIndex > fileNameStartIndex ?
-                    src.substring(fileNameStartIndex, questionMarkLastIndex) :
-                    src.substring(fileNameStartIndex);
-
-            if (formatToSave != null) {
-                int i = fileName.lastIndexOf('.');
-                if (!fileName.substring(i + 1).equals(formatToSave))
-                    continue;
-            }
-            File file = new File(saveDirectory, fileName);
-            downloadImage(src, file);
+            String iFormat = cmd.getOptionValue("iFormat");
+            downloadImage(src, saveDirectory, iFormat);
         }
     }
 
-    private static String downloadImage(String src, File file) throws IOException, InterruptedException {
+    private static boolean downloadImage(String src, String saveDirectory, String format) throws IOException, InterruptedException {
         HttpRequest request = buildRequest(src);
         HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
 
+        Optional<String> contentTypeOptional = response.headers().firstValue("content-type");
+        String fileExtension = null;
+        if (contentTypeOptional.isPresent()) {
+            String s = contentTypeOptional.get();
+            int slashIndex = s.lastIndexOf('/');
+            int plusIndex = s.lastIndexOf('+');
+            if (plusIndex > slashIndex)
+                fileExtension = s.substring(slashIndex + 1, plusIndex);
+            else
+                fileExtension = s.substring(slashIndex + 1);
+        }
+
+        int fileNameStartIndex = src.lastIndexOf('/') + 1;
+        int fileNameEndIndex = src.lastIndexOf('.');
+        String fileName = src.substring(fileNameStartIndex, fileNameEndIndex);
+        if (fileExtension != null && format != null) {
+            if (!fileExtension.equalsIgnoreCase(format))
+                return false;
+        }
+        fileName += "." + fileExtension;
+
+        File file = new File(saveDirectory, fileName);
         try (FileOutputStream fileOutputStream = new FileOutputStream(file)) {
             fileOutputStream.write(response.body());
+            return true;
         } catch (FileNotFoundException e) {
             System.out.println("Invalid save path: " + file.getPath());
         } catch (Exception e) {
             System.out.println("Couldn't download image: " + file.getName());
         }
-        return src;
+        return false;
     }
 
     private static String[] getFollowLinks(Document doc, String pageUrl) throws MalformedURLException {
