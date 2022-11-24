@@ -4,6 +4,8 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.MalformedURLException;
@@ -60,7 +62,7 @@ public class Main {
     private static HttpRequest buildRequest(String link) {
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder().GET().uri(URI.create(link));
 
-        String userAgent = cmd.getOptionValue("user-agent");
+        String userAgent = cmd.getOptionValue("uAgent");
         if (userAgent != null)
             requestBuilder.header("User-Agent", userAgent);
 
@@ -85,7 +87,7 @@ public class Main {
 
     private static Document getDocument(HttpRequest request) throws Exception {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return Jsoup.parse(response.body());
+        return Jsoup.parse(response.body(), response.uri().toString());
     }
 
     //TODO: Use httpClient
@@ -93,10 +95,10 @@ public class Main {
 
     private static void getPicturesFromDoc(Document doc) {
         Elements images = doc.getElementsByTag("img");
-        String saveDirectory = cmd.getOptionValue("output-dir");
+        String saveDirectory = cmd.getOptionValue("oDir");
         if (saveDirectory == null)
             saveDirectory = System.getProperty("user.dir");
-        String formatToSave = cmd.getOptionValue("image-format");
+        String formatToSave = cmd.getOptionValue("iFormat");
 
         for (Element image : images) {
             String src = image.attr("abs:src");
@@ -116,12 +118,15 @@ public class Main {
                     continue;
             }
 
+            File file = new File(saveDirectory, fileName);
             try (InputStream in = new URL(src).openStream();
-                 FileOutputStream fileOutputStream = new FileOutputStream(saveDirectory + fileName)) {
+                 FileOutputStream fileOutputStream = new FileOutputStream(file)) {
                 byte dataBuffer[] = new byte[2048];
                 for (int bytesRead; (bytesRead = in.read(dataBuffer, 0, 2048)) != -1; ) {
                     fileOutputStream.write(dataBuffer, 0, bytesRead);
                 }
+            } catch (FileNotFoundException e) {
+                System.out.println("Invalid save path: " + saveDirectory);
             } catch (Exception e) {
                 System.out.println("Couldn't download image: " + fileName);
             }
