@@ -4,10 +4,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.InputStream;
+import java.io.*;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
@@ -15,7 +12,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
-import java.util.regex.Pattern;
 
 public class Main {
     static final String PROGRAM_NAME = "WebCrawler";
@@ -90,10 +86,9 @@ public class Main {
         return Jsoup.parse(response.body(), response.uri().toString());
     }
 
-    //TODO: Use httpClient
     //TODO: image extension, get it from content-type header
 
-    private static void getPicturesFromDoc(Document doc) {
+    private static void getPicturesFromDoc(Document doc) throws IOException, InterruptedException {
         Elements images = doc.getElementsByTag("img");
         String saveDirectory = cmd.getOptionValue("oDir");
         if (saveDirectory == null)
@@ -117,20 +112,23 @@ public class Main {
                 if (!fileName.substring(i + 1).equals(formatToSave))
                     continue;
             }
-
             File file = new File(saveDirectory, fileName);
-            try (InputStream in = new URL(src).openStream();
-                 FileOutputStream fileOutputStream = new FileOutputStream(file)) {
-                byte dataBuffer[] = new byte[2048];
-                for (int bytesRead; (bytesRead = in.read(dataBuffer, 0, 2048)) != -1; ) {
-                    fileOutputStream.write(dataBuffer, 0, bytesRead);
-                }
-            } catch (FileNotFoundException e) {
-                System.out.println("Invalid save path: " + saveDirectory);
-            } catch (Exception e) {
-                System.out.println("Couldn't download image: " + fileName);
-            }
+            downloadImage(src, file);
         }
+    }
+
+    private static String downloadImage(String src, File file) throws IOException, InterruptedException {
+        HttpRequest request = buildRequest(src);
+        HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+        try (FileOutputStream fileOutputStream = new FileOutputStream(file)) {
+            fileOutputStream.write(response.body());
+        } catch (FileNotFoundException e) {
+            System.out.println("Invalid save path: " + file.getPath());
+        } catch (Exception e) {
+            System.out.println("Couldn't download image: " + file.getName());
+        }
+        return src;
     }
 
     private static String[] getFollowLinks(Document doc, String pageUrl) throws MalformedURLException {
