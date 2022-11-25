@@ -4,7 +4,10 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
@@ -19,8 +22,9 @@ public class Main {
     private static final Set<String> PROCESSED_LINKS = new HashSet<>();
     private static final Queue<String> LINKS_TO_PROCESS = new LinkedList<>();
     private static final HelpFormatter FORMATTER = new HelpFormatter();
-    private static CommandLine cmd = null;
+    private static final Set<String> FORMATS_TO_DOWNLOAD = new HashSet<>();
     private static final HttpClient httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.ALWAYS).build();
+    private static CommandLine cmd = null;
 
     public static void main(String[] args) throws Exception {
         Options options = intializeOptions();
@@ -37,18 +41,22 @@ public class Main {
             return;
         }
 
-        String baseUrl = cmd.getOptionValue("url");
-        LINKS_TO_PROCESS.add(baseUrl);
-        processLinks(baseUrl);
+        String[] baseUrl = cmd.getOptionValues("url");
+        LINKS_TO_PROCESS.addAll(List.of(baseUrl));
+        for (String url : baseUrl)
+            processLinks(url);
+
+        String[] formats = cmd.getOptionValues("iFormat");
+        FORMATS_TO_DOWNLOAD.addAll(List.of(formats));
     }
 
     private static Options intializeOptions() {
         Options options = new Options();
-        Option url = Option.builder("url").argName("URL").hasArg().required().desc("The url to scrape").build();
+        Option url = Option.builder("url").argName("URL").hasArgs().valueSeparator(',').required().desc("The url to scrape").build();
         options.addOption(url);
         Option outputDir = Option.builder("oDir").argName("Output directory").hasArg().desc("The directory where the images will be downloaded").build();
         options.addOption(outputDir);
-        Option imageFormat = Option.builder("iFormat").argName("Image format").hasArg().desc("The image format to be downloaded").build();
+        Option imageFormat = Option.builder("iFormat").argName("Image format").hasArgs().valueSeparator(',').desc("The image format to be downloaded").build();
         options.addOption(imageFormat);
         Option userAgent = Option.builder("uAgent").argName("User agent").hasArg().desc("User agent to be sent to the server").build();
         options.addOption(userAgent);
@@ -71,11 +79,10 @@ public class Main {
             if (PROCESSED_LINKS.contains(link))
                 continue;
 
-            HttpRequest request = buildRequest(link);
-
             System.out.println("Currently processing page: " + link);
+            HttpRequest request = buildRequest(link);
             Document document = getDocument(request);
-            getPicturesFromDoc(document);
+            getImagesFromDoc(document);
             PROCESSED_LINKS.add(link);
             LINKS_TO_PROCESS.addAll(List.of(getFollowLinks(document, baseUrl)));
         }
@@ -86,7 +93,7 @@ public class Main {
         return Jsoup.parse(response.body(), response.uri().toString());
     }
 
-    private static void getPicturesFromDoc(Document doc) throws IOException, InterruptedException {
+    private static void getImagesFromDoc(Document doc) throws Exception {
         Elements images = doc.getElementsByTag("img");
         String saveDirectory = cmd.getOptionValue("oDir");
         if (saveDirectory == null)
@@ -98,49 +105,51 @@ public class Main {
                 continue;
             PROCESSED_IMAGES.add(src);
 
-            String iFormat = cmd.getOptionValue("iFormat");
-            downloadImage(src, saveDirectory, iFormat);
+            downloadImage(src, saveDirectory);
         }
     }
 
-    private static boolean downloadImage(String src, String saveDirectory, String format) throws IOException, InterruptedException {
+    private static void downloadImage(String src, String saveDirectory) throws IOException, InterruptedException {
         HttpRequest request = buildRequest(src);
         HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
 
         Optional<String> contentTypeOptional = response.headers().firstValue("content-type");
-        String fileExtension = null;
-        if (contentTypeOptional.isPresent()) {
-            String s = contentTypeOptional.get();
-            int slashIndex = s.lastIndexOf('/');
-            int plusIndex = s.lastIndexOf('+');
-            if (plusIndex > slashIndex)
-                fileExtension = s.substring(slashIndex + 1, plusIndex);
-            else
-                fileExtension = s.substring(slashIndex + 1);
-        }
-
-        int fileNameStartIndex = src.lastIndexOf('/') + 1;
-        int fileNameEndIndex = src.lastIndexOf('.');
-        String fileName = src.substring(fileNameStartIndex, fileNameEndIndex);
-        if (fileExtension != null && format != null) {
-            if (!fileExtension.equalsIgnoreCase(format))
-                return false;
-        }
-        fileName += "." + fileExtension;
+        String fileName = getFileName(src, contentTypeOptional);
+        if (fileName == null)
+            return;
 
         File file = new File(saveDirectory, fileName);
         try (FileOutputStream fileOutputStream = new FileOutputStream(file)) {
             fileOutputStream.write(response.body());
-            return true;
         } catch (FileNotFoundException e) {
             System.out.println("Invalid save path: " + file.getPath());
         } catch (Exception e) {
             System.out.println("Couldn't download image: " + file.getName());
         }
-        return false;
     }
 
-    private static String[] getFollowLinks(Document doc, String pageUrl) throws MalformedURLException {
+    private static String getFileName(String src, Optional<String> contentTypeOptional) {
+        String fileExtension = null;
+        if (contentTypeOptional.isPresent()) {
+            String s = contentTypeOptional.get();
+            int slashIndex = s.lastIndexOf('/') + 1;
+            int endIndex = s.lastIndexOf('+');
+            if (endIndex == -1)
+                endIndex = s.length();
+
+            fileExtension = s.substring(slashIndex, endIndex);
+        }
+
+        int fileNameStartIndex = src.lastIndexOf('/') + 1;
+        int fileNameEndIndex = src.lastIndexOf('.');
+        String fileName = src.substring(fileNameStartIndex, fileNameEndIndex);
+        if (fileExtension != null && !FORMATS_TO_DOWNLOAD.contains(fileExtension))
+            return null;
+
+        return fileName + "." + fileExtension;
+    }
+
+    private static String[] getFollowLinks(Document doc, String pageUrl) {
         ArrayList<String> followLinks = new ArrayList<>();
         Elements links = doc.getElementsByTag("a");
         for (Element link : links) {
